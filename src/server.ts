@@ -23,6 +23,12 @@ const HEADERS_TIMEOUT_MS = Number(process.env.HEADERS_TIMEOUT_MS ?? 35_000);
 const KEEP_ALIVE_TIMEOUT_MS = Number(process.env.KEEP_ALIVE_TIMEOUT_MS ?? 5_000);
 
 type Kind = "image" | "video";
+type UploadTarget = {
+  folderPath: string;
+  assetKey: string;
+  legacyMenuItemId: string | null;
+  legacySlot: string | null;
+};
 
 const EXT_BY_MIMETYPE: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -35,6 +41,10 @@ const LIMIT_BY_KIND: Record<Kind, number> = {
   image: 10 * 1024 * 1024,
   video: 20 * 1024 * 1024
 };
+
+export function uploadSizeLimitByKind(kind: Kind): number {
+  return LIMIT_BY_KIND[kind];
+}
 
 function badRequest(res: express.Response, message: string): void {
   res.status(400).json({ ok: false, error: message });
@@ -56,6 +66,88 @@ function readSegment(value: unknown): string | null {
     return null;
   }
   return value;
+}
+
+export function sanitizeFolderPath(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  if (!normalized) {
+    return null;
+  }
+
+  const segments = normalized.split("/");
+  for (const segment of segments) {
+    if (!segment || !VALID_SEGMENT.test(segment)) {
+      return null;
+    }
+  }
+
+  return segments.join("/");
+}
+
+export function readAssetKey(req: Request): string | null {
+  const assetKey = readSegment(req.query.assetKey);
+  if (assetKey) {
+    return assetKey;
+  }
+  return readSegment(req.query.slot);
+}
+
+export function readFolderPath(req: Request): { folderPath: string | null; legacyMenuItemId: string | null } {
+  if (typeof req.query.folderPath === "string") {
+    return {
+      folderPath: sanitizeFolderPath(req.query.folderPath),
+      legacyMenuItemId: readSegment(req.query.menuItemId)
+    };
+  }
+
+  if (typeof req.query.path === "string") {
+    return {
+      folderPath: sanitizeFolderPath(req.query.path),
+      legacyMenuItemId: readSegment(req.query.menuItemId)
+    };
+  }
+
+  const legacyMenuItemId = readSegment(req.query.menuItemId);
+  return {
+    folderPath: legacyMenuItemId,
+    legacyMenuItemId
+  };
+}
+
+export function resolveUploadTarget(req: Request): UploadTarget | null {
+  const { folderPath, legacyMenuItemId } = readFolderPath(req);
+  if (!folderPath) {
+    return null;
+  }
+
+  const assetKey = readAssetKey(req);
+  if (!assetKey) {
+    return null;
+  }
+
+  return {
+    folderPath,
+    assetKey,
+    legacyMenuItemId,
+    legacySlot: readSegment(req.query.slot)
+  };
+}
+
+export function extensionFromMimetype(mimetype: string): string | null {
+  return EXT_BY_MIMETYPE[mimetype] ?? null;
+}
+
+export function isMimetypeAllowedForKind(kind: Kind, mimetype: string): boolean {
+  const isImage = mimetype.startsWith("image/");
+  const isVideo = mimetype === "video/mp4";
+  return (kind === "image" && isImage) || (kind === "video" && isVideo);
 }
 
 function normalizePositiveInt(input: number, fallback: number): number {
@@ -136,19 +228,14 @@ app.post("/upload", uploadLimiter, apiKeyGuard, async (req, res) => {
     return;
   }
 
-  const menuItemId = readSegment(req.query.menuItemId);
-  if (!menuItemId) {
-    badRequest(res, "menuItemId is invalid");
+  const target = resolveUploadTarget(req);
+  if (!target) {
+    badRequest(res, "folderPath/path (or legacy menuItemId) and assetKey/slot are required and must be valid");
     return;
   }
+  const { folderPath, assetKey, legacyMenuItemId } = target;
 
-  const slot = readSegment(req.query.slot);
-  if (!slot) {
-    badRequest(res, "slot is invalid");
-    return;
-  }
-
-  const upload = getUploader(LIMIT_BY_KIND[kind]).single("file");
+  const upload = getUploader(uploadSizeLimitByKind(kind)).single("file");
 
   upload(req, res, async (err: unknown) => {
     try {
@@ -167,36 +254,37 @@ app.post("/upload", uploadLimiter, apiKeyGuard, async (req, res) => {
         return;
       }
 
-      const ext = EXT_BY_MIMETYPE[uploaded.mimetype];
+      const ext = extensionFromMimetype(uploaded.mimetype);
       if (!ext) {
         await fs.unlink(uploaded.path).catch(() => undefined);
         res.status(415).json({ ok: false, error: "unsupported media type" });
         return;
       }
 
-      const isImage = uploaded.mimetype.startsWith("image/");
-      const isVideo = uploaded.mimetype === "video/mp4";
-      if ((kind === "image" && !isImage) || (kind === "video" && !isVideo)) {
+      if (!isMimetypeAllowedForKind(kind, uploaded.mimetype)) {
         await fs.unlink(uploaded.path).catch(() => undefined);
         res.status(415).json({ ok: false, error: "unsupported media type for kind" });
         return;
       }
 
-      const parentDir = path.join(DATA_ROOT, kind === "image" ? "images" : "videos", "menu-items", menuItemId);
+      const folderSegments = folderPath.split("/");
+      const parentDir = path.join(DATA_ROOT, kind === "image" ? "images" : "videos", ...folderSegments);
       await fs.mkdir(parentDir, { recursive: true });
 
-      const finalFilename = `${slot}.${ext}`;
+      const finalFilename = `${assetKey}.${ext}`;
       const finalPath = path.join(parentDir, finalFilename);
       await fs.rename(uploaded.path, finalPath);
 
       const publicPrefix = kind === "image" ? "images" : "videos";
-      const urlPath = `/${publicPrefix}/menu-items/${menuItemId}/${finalFilename}`;
+      const urlPath = `/${publicPrefix}/${folderPath}/${finalFilename}`;
 
       res.json({
         ok: true,
         kind,
-        menuItemId,
-        slot,
+        folderPath,
+        assetKey,
+        menuItemId: legacyMenuItemId ?? folderPath,
+        slot: target.legacySlot ?? assetKey,
         url: `${MEDIA_BASE_URL}${urlPath}`
       });
     } catch (uploadError) {
@@ -226,7 +314,9 @@ async function main(): Promise<void> {
   server.keepAliveTimeout = normalizePositiveInt(KEEP_ALIVE_TIMEOUT_MS, 5_000);
 }
 
-main().catch((error: unknown) => {
-  console.error("Failed to start server", error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error: unknown) => {
+    console.error("Failed to start server", error);
+    process.exit(1);
+  });
+}
