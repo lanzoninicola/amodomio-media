@@ -1,0 +1,72 @@
+@apiBase = https://media-api.amodomio.com.br
+@mediaBase = https://media.amodomio.com.br
+@apiKey = b7f0c8d8a3b14c2f9e6d1a0c4f2e7b9c8d1f3a6b5e2c9f0a7d4b1c8e6f9a2d3
+
+@menuItemId = margherita
+@imageSlot = cover
+@videoSlot = promo
+
+### Health - media-api
+GET {{apiBase}}/health
+
+### Health - media origin nginx
+GET {{mediaBase}}/health
+
+### Upload image (expected: 200)
+POST {{apiBase}}/upload?kind=image&menuItemId={{menuItemId}}&slot={{imageSlot}}
+x-api-key: {{apiKey}}
+Content-Type: multipart/form-data; boundary=WebKitFormBoundary7MA4YWxkTrZu0gW
+
+--WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="cover.jpg"
+Content-Type: image/jpeg
+
+< ./cover.jpg
+--WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Upload video mp4 (expected: 200)
+POST {{apiBase}}/upload?kind=video&menuItemId={{menuItemId}}&slot={{videoSlot}}
+x-api-key: {{apiKey}}
+Content-Type: multipart/form-data; boundary=WebKitFormBoundary7MA4YWxkTrZu0gW
+
+--WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="promo.mp4"
+Content-Type: video/mp4
+
+< ./promo.mp4
+--WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Upload without API key (expected: 401)
+POST {{apiBase}}/upload?kind=image&menuItemId={{menuItemId}}&slot={{imageSlot}}
+Content-Type: multipart/form-data; boundary=WebKitFormBoundary7MA4YWxkTrZu0gW
+
+--WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="cover.jpg"
+Content-Type: image/jpeg
+
+< ./cover.jpg
+--WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Upload with invalid mimetype for image kind (expected: 415)
+POST {{apiBase}}/upload?kind=image&menuItemId={{menuItemId}}&slot={{imageSlot}}
+x-api-key: {{apiKey}}
+Content-Type: multipart/form-data; boundary=WebKitFormBoundary7MA4YWxkTrZu0gW
+
+--WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="arquivo.txt"
+Content-Type: text/plain
+
+< ./arquivo.txt
+--WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Upload image too large >10MB (expected: 413)
+POST {{apiBase}}/upload?kind=image&menuItemId={{menuItemId}}&slot={{imageSlot}}
+x-api-key: {{apiKey}}
+Content-Type: multipart/form-data; boundary=WebKitFormBoundary7MA4YWxkTrZu0gW
+
+--WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="imagem-maior-que-10mb.jpg"
+Content-Type: image/jpeg
+
+< ./imagem-maior-que-10mb.jpg
+--WebKitFormBoundary7MA4YWxkTrZu0gW--
