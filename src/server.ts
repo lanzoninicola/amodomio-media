@@ -30,6 +30,11 @@ type UploadTarget = {
   legacySlot: string | null;
 };
 
+type LegacyCompatFields = {
+  menuItemId: string;
+  slot: string;
+};
+
 const EXT_BY_MIMETYPE: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -140,6 +145,44 @@ export function resolveUploadTarget(req: Request): UploadTarget | null {
   };
 }
 
+export function resolveV2UploadTarget(req: Request): UploadTarget | null {
+  const folderPath = (() => {
+    if (typeof req.query.folderPath === "string") {
+      return sanitizeFolderPath(req.query.folderPath);
+    }
+    if (typeof req.query.path === "string") {
+      return sanitizeFolderPath(req.query.path);
+    }
+    return null;
+  })();
+
+  if (!folderPath) {
+    return null;
+  }
+
+  const assetKey = readSegment(req.query.assetKey);
+  if (!assetKey) {
+    return null;
+  }
+
+  return {
+    folderPath,
+    assetKey,
+    legacyMenuItemId: null,
+    legacySlot: null
+  };
+}
+
+export function readLegacyCompatFields(target: UploadTarget): LegacyCompatFields | null {
+  if (!target.legacyMenuItemId || !target.legacySlot) {
+    return null;
+  }
+  return {
+    menuItemId: target.legacyMenuItemId,
+    slot: target.legacySlot
+  };
+}
+
 export function extensionFromMimetype(mimetype: string): string | null {
   return EXT_BY_MIMETYPE[mimetype] ?? null;
 }
@@ -221,19 +264,18 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/upload", uploadLimiter, apiKeyGuard, async (req, res) => {
-  const kind = readKind(req);
-  if (!kind) {
-    badRequest(res, "kind must be image or video");
-    return;
-  }
+app.get("/healthcheck", (_req, res) => {
+  res.json({ ok: true });
+});
 
-  const target = resolveUploadTarget(req);
-  if (!target) {
-    badRequest(res, "folderPath/path (or legacy menuItemId) and assetKey/slot are required and must be valid");
-    return;
-  }
-  const { folderPath, assetKey, legacyMenuItemId } = target;
+async function handleUpload(
+  req: Request,
+  res: express.Response,
+  target: UploadTarget,
+  kind: Kind,
+  includeLegacyCompat: boolean
+): Promise<void> {
+  const { folderPath, assetKey } = target;
 
   const upload = getUploader(uploadSizeLimitByKind(kind)).single("file");
 
@@ -277,15 +319,15 @@ app.post("/upload", uploadLimiter, apiKeyGuard, async (req, res) => {
 
       const publicPrefix = kind === "image" ? "images" : "videos";
       const urlPath = `/${publicPrefix}/${folderPath}/${finalFilename}`;
+      const legacyCompat = includeLegacyCompat ? readLegacyCompatFields(target) : null;
 
       res.json({
         ok: true,
         kind,
         folderPath,
         assetKey,
-        menuItemId: legacyMenuItemId ?? folderPath,
-        slot: target.legacySlot ?? assetKey,
-        url: `${MEDIA_BASE_URL}${urlPath}`
+        url: `${MEDIA_BASE_URL}${urlPath}`,
+        ...(legacyCompat ?? {})
       });
     } catch (uploadError) {
       const uploaded = req.file;
@@ -296,6 +338,38 @@ app.post("/upload", uploadLimiter, apiKeyGuard, async (req, res) => {
       console.error("Upload error", uploadError);
     }
   });
+}
+
+app.post("/upload", uploadLimiter, apiKeyGuard, async (req, res) => {
+  const kind = readKind(req);
+  if (!kind) {
+    badRequest(res, "kind must be image or video");
+    return;
+  }
+
+  const target = resolveUploadTarget(req);
+  if (!target) {
+    badRequest(res, "folderPath/path (or legacy menuItemId) and assetKey/slot are required and must be valid");
+    return;
+  }
+
+  await handleUpload(req, res, target, kind, true);
+});
+
+app.post("/v2/upload", uploadLimiter, apiKeyGuard, async (req, res) => {
+  const kind = readKind(req);
+  if (!kind) {
+    badRequest(res, "kind must be image or video");
+    return;
+  }
+
+  const target = resolveV2UploadTarget(req);
+  if (!target) {
+    badRequest(res, "folderPath/path and assetKey are required and must be valid");
+    return;
+  }
+
+  await handleUpload(req, res, target, kind, false);
 });
 
 async function main(): Promise<void> {

@@ -13,7 +13,7 @@ Em outras palavras: a API grava, o Nginx entrega.
 
 ## Fluxo resumido
 
-- cliente envia `POST /upload` para `media-api`;
+- cliente envia `POST /v2/upload` (ou `POST /upload` legado) para `media-api`;
 - `media-api` valida e salva em `/data`;
 - `media-nginx` so serve/publica esse arquivo no dominio `media.amodomio.com.br`.
 
@@ -106,7 +106,10 @@ Importante: sao 2 servicos diferentes.
 ## Endpoint
 
 - `GET /health` -> `{ "ok": true }`
-- `POST /upload?kind=image|video&folderPath=<pasta/subpasta>&assetKey=<nome-tecnico>` -> `{ ok, kind, folderPath, assetKey, menuItemId, slot, url }`
+- `GET /healthcheck` -> `{ "ok": true }`
+- `POST /v2/upload?kind=image|video&folderPath=<pasta/subpasta>&assetKey=<nome-tecnico>` -> `{ ok, kind, folderPath, assetKey, url }`
+- `POST /upload?kind=image|video&folderPath=<pasta/subpasta>&assetKey=<nome-tecnico>` -> compativel com legado
+- Contrato OpenAPI: `openapi.yaml`
 
 Exemplo de resposta da REST API:
 
@@ -116,8 +119,6 @@ Exemplo de resposta da REST API:
   "kind": "image",
   "folderPath": "campaigns/summer-2026",
   "assetKey": "hero",
-  "menuItemId": "campaigns/summer-2026",
-  "slot": "hero",
   "url": "https://media.amodomio.com.br/images/campaigns/summer-2026/hero.jpg"
 }
 ```
@@ -127,13 +128,13 @@ Campo multipart esperado: `file`.
 ## Exemplo de upload com curl
 
 ```bash
-curl -X POST "http://localhost:3001/upload?kind=image&folderPath=campaigns/summer-2026&assetKey=hero" \
+curl -X POST "http://localhost:3001/v2/upload?kind=image&folderPath=campaigns/summer-2026&assetKey=hero" \
   -H "x-api-key: SUA_CHAVE" \
   -F "file=@cover.jpg"
 ```
 
 ```bash
-curl -X POST "http://localhost:3001/upload?kind=video&folderPath=reels/instagram&assetKey=mortazza-promo" \
+curl -X POST "http://localhost:3001/v2/upload?kind=video&folderPath=reels/instagram&assetKey=mortazza-promo" \
   -H "x-api-key: SUA_CHAVE" \
   -F "file=@promo.mp4"
 ```
@@ -145,7 +146,9 @@ Clientes antigos continuam funcionando:
 - Se `folderPath` (ou `path`) nao for enviado, a API usa `menuItemId` como pasta alvo.
 - Se `folderPath` (ou `path`) for enviado mas invalido, a API retorna `400` (nao cai no fallback legado).
 - Se `assetKey` nao for enviado, a API usa `slot` como nome tecnico do arquivo.
-- A resposta continua trazendo `{ ok, kind, ..., url }` e inclui tambem os campos legados `menuItemId` e `slot`.
+- A resposta sempre traz `{ ok, kind, folderPath, assetKey, url }`.
+- Quando a chamada usa contrato legado (`menuItemId` + `slot`), a resposta inclui tambem `menuItemId` e `slot`.
+- Para novas integracoes, prefira `POST /v2/upload`.
 
 Exemplo legado:
 
@@ -167,13 +170,14 @@ Healthchecks:
 
 ```bash
 curl https://media-api.amodomio.com.br/health
+curl https://media-api.amodomio.com.br/healthcheck
 curl https://media.amodomio.com.br/health
 ```
 
 Upload de imagem:
 
 ```bash
-curl -X POST "https://media-api.amodomio.com.br/upload?kind=image&folderPath=campaigns/summer-2026&assetKey=hero" \
+curl -X POST "https://media-api.amodomio.com.br/v2/upload?kind=image&folderPath=campaigns/summer-2026&assetKey=hero" \
   -H "x-api-key: $API_KEY" \
   -F "file=@cover.jpg"
 ```
@@ -181,7 +185,7 @@ curl -X POST "https://media-api.amodomio.com.br/upload?kind=image&folderPath=cam
 Upload de video mp4:
 
 ```bash
-curl -X POST "https://media-api.amodomio.com.br/upload?kind=video&folderPath=reels/instagram&assetKey=mortazza-promo" \
+curl -X POST "https://media-api.amodomio.com.br/v2/upload?kind=video&folderPath=reels/instagram&assetKey=mortazza-promo" \
   -H "x-api-key: $API_KEY" \
   -F "file=@promo.mp4"
 ```

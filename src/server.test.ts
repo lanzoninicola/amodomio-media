@@ -4,7 +4,9 @@ import type { Request } from "express";
 import {
   extensionFromMimetype,
   isMimetypeAllowedForKind,
+  readLegacyCompatFields,
   resolveUploadTarget,
+  resolveV2UploadTarget,
   sanitizeFolderPath,
   uploadSizeLimitByKind
 } from "./server";
@@ -38,6 +40,39 @@ test("resolveUploadTarget supports new contract with folderPath + assetKey", () 
   });
 });
 
+test("resolveV2UploadTarget accepts only folderPath/path + assetKey", () => {
+  const withFolderPath = resolveV2UploadTarget(reqWithQuery({
+    kind: "image",
+    folderPath: "brands/amodomio",
+    assetKey: "logo"
+  }));
+  assert.deepEqual(withFolderPath, {
+    folderPath: "brands/amodomio",
+    assetKey: "logo",
+    legacyMenuItemId: null,
+    legacySlot: null
+  });
+
+  const withPathAlias = resolveV2UploadTarget(reqWithQuery({
+    kind: "image",
+    path: "brands/amodomio",
+    assetKey: "logo"
+  }));
+  assert.deepEqual(withPathAlias, {
+    folderPath: "brands/amodomio",
+    assetKey: "logo",
+    legacyMenuItemId: null,
+    legacySlot: null
+  });
+
+  const legacyOnly = resolveV2UploadTarget(reqWithQuery({
+    kind: "image",
+    menuItemId: "margherita",
+    slot: "cover"
+  }));
+  assert.equal(legacyOnly, null);
+});
+
 test("resolveUploadTarget keeps legacy fallback with menuItemId + slot", () => {
   const target = resolveUploadTarget(reqWithQuery({
     kind: "image",
@@ -50,6 +85,27 @@ test("resolveUploadTarget keeps legacy fallback with menuItemId + slot", () => {
     assetKey: "cover",
     legacyMenuItemId: "margherita",
     legacySlot: "cover"
+  });
+});
+
+test("readLegacyCompatFields only returns data for legacy requests", () => {
+  const newContractTarget = resolveUploadTarget(reqWithQuery({
+    kind: "image",
+    folderPath: "brands/amodomio",
+    assetKey: "logo"
+  }));
+  assert.ok(newContractTarget);
+  assert.equal(readLegacyCompatFields(newContractTarget), null);
+
+  const legacyTarget = resolveUploadTarget(reqWithQuery({
+    kind: "image",
+    menuItemId: "margherita",
+    slot: "cover"
+  }));
+  assert.ok(legacyTarget);
+  assert.deepEqual(readLegacyCompatFields(legacyTarget), {
+    menuItemId: "margherita",
+    slot: "cover"
   });
 });
 

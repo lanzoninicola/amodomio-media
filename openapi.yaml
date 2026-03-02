@@ -1,0 +1,250 @@
+openapi: 3.1.0
+info:
+  title: A Modo Mio Media API
+  version: 1.1.0
+  description: API de upload de imagens e videos com contrato generico (v2) e compatibilidade legado.
+servers:
+  - url: https://media-api.amodomio.com.br
+paths:
+  /health:
+    get:
+      summary: Healthcheck
+      responses:
+        "200":
+          description: Servico online
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+  /healthcheck:
+    get:
+      summary: Healthcheck alias
+      responses:
+        "200":
+          description: Servico online
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+  /v2/upload:
+    post:
+      summary: Upload generico de imagem/video
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KindParam"
+        - $ref: "#/components/parameters/FolderPathParam"
+        - $ref: "#/components/parameters/PathAliasParam"
+        - $ref: "#/components/parameters/AssetKeyParam"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Upload concluido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResponseV2"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/FileTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /upload:
+    post:
+      summary: Upload com compatibilidade legado
+      description: >
+        Mantem compatibilidade com clientes antigos (`menuItemId` + `slot`).
+        Novas integracoes devem usar `/v2/upload`.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KindParam"
+        - $ref: "#/components/parameters/FolderPathParam"
+        - $ref: "#/components/parameters/PathAliasParam"
+        - $ref: "#/components/parameters/AssetKeyParam"
+        - $ref: "#/components/parameters/MenuItemIdParam"
+        - $ref: "#/components/parameters/SlotParam"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Upload concluido
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/UploadResponseV2"
+                  - $ref: "#/components/schemas/UploadResponseLegacy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/FileTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+  parameters:
+    KindParam:
+      name: kind
+      in: query
+      required: true
+      schema:
+        type: string
+        enum: [image, video]
+    FolderPathParam:
+      name: folderPath
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Pasta/subpasta de destino. Em `/v2/upload`, `folderPath` ou `path` eh obrigatorio.
+    PathAliasParam:
+      name: path
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Alias de `folderPath`.
+    AssetKeyParam:
+      name: assetKey
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Nome tecnico do arquivo. Em `/v2/upload`, obrigatorio.
+    MenuItemIdParam:
+      name: menuItemId
+      in: query
+      required: false
+      deprecated: true
+      schema:
+        type: string
+      description: Campo legado para fallback de pasta quando `folderPath`/`path` nao e enviado.
+    SlotParam:
+      name: slot
+      in: query
+      required: false
+      deprecated: true
+      schema:
+        type: string
+      description: Campo legado para fallback de `assetKey`.
+  schemas:
+    UploadResponseV2:
+      type: object
+      required: [ok, kind, folderPath, assetKey, url]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        kind:
+          type: string
+          enum: [image, video]
+        folderPath:
+          type: string
+        assetKey:
+          type: string
+        url:
+          type: string
+          format: uri
+    UploadResponseLegacy:
+      allOf:
+        - $ref: "#/components/schemas/UploadResponseV2"
+        - type: object
+          required: [menuItemId, slot]
+          properties:
+            menuItemId:
+              type: string
+              deprecated: true
+            slot:
+              type: string
+              deprecated: true
+    ErrorResponse:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          const: false
+        error:
+          type: string
+  responses:
+    BadRequest:
+      description: Parametros invalidos
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: API key ausente ou invalida
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    FileTooLarge:
+      description: Arquivo acima do limite
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnsupportedMediaType:
+      description: Tipo de arquivo nao suportado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    TooManyRequests:
+      description: Rate limit excedido
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Erro interno
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
